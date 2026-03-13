@@ -1,0 +1,710 @@
+name: Lab 1 - Marketplace Database CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install ruff
+      
+      - name: Run linter
+        run: |
+          cd backend
+          ruff check . --ignore=E501
+        continue-on-error: true
+
+  check-ddd-architecture:
+    name: Check DDD Architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Check DDD layer structure exists
+        run: |
+          echo "Checking DDD layer structure..."
+          
+          # Check domain layer exists
+          if [ ! -d "backend/app/domain" ]; then
+            echo "❌ FAIL: domain layer not found at backend/app/domain"
+            exit 1
+          fi
+          echo "✅ domain layer exists"
+          
+          # Check infrastructure layer exists
+          if [ ! -d "backend/app/infrastructure" ]; then
+            echo "❌ FAIL: infrastructure layer not found at backend/app/infrastructure"
+            exit 1
+          fi
+          echo "✅ infrastructure layer exists"
+          
+          # Check application layer exists
+          if [ ! -d "backend/app/application" ]; then
+            echo "❌ FAIL: application layer not found at backend/app/application"
+            exit 1
+          fi
+          echo "✅ application layer exists"
+          
+          echo ""
+          echo "All DDD layers present!"
+
+      - name: Check domain layer independence
+        run: |
+          echo "Checking domain layer does not depend on infrastructure/application..."
+          
+          # Domain should NOT import from infrastructure or application
+          if grep -r "from app.infrastructure" backend/app/domain/ 2>/dev/null || \
+             grep -r "import app.infrastructure" backend/app/domain/ 2>/dev/null; then
+            echo "❌ FAIL: domain layer imports from infrastructure (violates DDD)"
+            exit 1
+          fi
+          
+          if grep -r "from app.application" backend/app/domain/ 2>/dev/null || \
+             grep -r "import app.application" backend/app/domain/ 2>/dev/null; then
+            echo "❌ FAIL: domain layer imports from application (violates DDD)"
+            exit 1
+          fi
+          
+          echo "✅ domain layer is independent (no forbidden imports)"
+
+      - name: Check required domain files
+        run: |
+          echo "Checking required domain files..."
+          
+          if [ ! -f "backend/app/domain/user.py" ]; then
+            echo "❌ FAIL: user.py not found in domain layer"
+            exit 1
+          fi
+          echo "✅ user.py exists"
+          
+          if [ ! -f "backend/app/domain/order.py" ]; then
+            echo "❌ FAIL: order.py not found in domain layer"
+            exit 1
+          fi
+          echo "✅ order.py exists"
+          
+          if [ ! -f "backend/app/domain/exceptions.py" ]; then
+            echo "❌ FAIL: exceptions.py not found in domain layer"
+            exit 1
+          fi
+          echo "✅ exceptions.py exists"
+
+      - name: Check required infrastructure files
+        run: |
+          echo "Checking required infrastructure files..."
+          
+          if [ ! -f "backend/app/infrastructure/repositories.py" ]; then
+            echo "❌ FAIL: repositories.py not found in infrastructure layer"
+            exit 1
+          fi
+          echo "✅ repositories.py exists"
+
+      - name: Check required application files
+        run: |
+          echo "Checking required application files..."
+          
+          if [ ! -f "backend/app/application/user_service.py" ]; then
+            echo "❌ FAIL: user_service.py not found in application layer"
+            exit 1
+          fi
+          echo "✅ user_service.py exists"
+          
+          if [ ! -f "backend/app/application/order_service.py" ]; then
+            echo "❌ FAIL: order_service.py not found in application layer"
+            exit 1
+          fi
+          echo "✅ order_service.py exists"
+
+  check-domain-implementation:
+    name: Check Domain Implementation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+      
+      - name: Check User class implementation
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          python -c "
+          from app.domain.user import User
+          import inspect
+          
+          # Check User is not empty class
+          members = [m for m in dir(User) if not m.startswith('_')]
+          if len(members) == 0:
+            print('❌ FAIL: User class is empty (not implemented)')            
+            exit(1)
+          
+          # Check User can be instantiated
+          try:
+            u = User(email='test@example.com')
+            if not hasattr(u, 'email'):
+              print('❌ FAIL: User has no email attribute')
+              exit(1)
+            if not hasattr(u, 'id'):
+              print('❌ FAIL: User has no id attribute')
+              exit(1)
+            print('✅ User class implemented correctly')
+          except NotImplementedError:
+            print('❌ FAIL: User class not implemented (NotImplementedError)')
+            exit(1)
+          except TypeError as e:
+            print(f'❌ FAIL: User class initialization error: {e}')
+            exit(1)
+          "
+
+      - name: Check OrderStatus enum implementation
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          python -c "
+          from app.domain.order import OrderStatus
+          from enum import Enum
+          
+          # Check it's an Enum
+          if not issubclass(OrderStatus, Enum):
+            print('❌ FAIL: OrderStatus is not an Enum')
+            exit(1)
+          
+          # Check required statuses
+          required = ['CREATED', 'PAID', 'CANCELLED', 'SHIPPED', 'COMPLETED']
+          for status in required:
+            if not hasattr(OrderStatus, status):
+              print(f'❌ FAIL: OrderStatus missing {status}')
+              exit(1)
+          
+          print('✅ OrderStatus enum implemented correctly')
+          "
+
+      - name: Check OrderItem class implementation
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          python -c "
+          from app.domain.order import OrderItem
+          from decimal import Decimal
+          
+          try:
+            item = OrderItem(product_name='Test', price=Decimal('10.00'), quantity=2)
+            
+            if not hasattr(item, 'product_name'):
+              print('❌ FAIL: OrderItem has no product_name')
+              exit(1)
+            if not hasattr(item, 'price'):
+              print('❌ FAIL: OrderItem has no price')
+              exit(1)
+            if not hasattr(item, 'quantity'):
+              print('❌ FAIL: OrderItem has no quantity')
+              exit(1)
+            if not hasattr(item, 'subtotal'):
+              print('❌ FAIL: OrderItem has no subtotal property')
+              exit(1)
+            
+            if item.subtotal != Decimal('20.00'):
+              print(f'❌ FAIL: OrderItem subtotal wrong: {item.subtotal} != 20.00')
+              exit(1)
+            
+            print('✅ OrderItem class implemented correctly')
+          except NotImplementedError:
+            print('❌ FAIL: OrderItem class not implemented')
+            exit(1)
+          except TypeError as e:
+            print(f'❌ FAIL: OrderItem initialization error: {e}')
+            exit(1)
+          "
+
+      - name: Check Order class implementation
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          python -c "
+          from app.domain.order import Order, OrderStatus
+          from decimal import Decimal
+          import uuid
+          
+          try:
+            order = Order(user_id=uuid.uuid4())
+            
+            if not hasattr(order, 'user_id'):
+              print('❌ FAIL: Order has no user_id')
+              exit(1)
+            if not hasattr(order, 'status'):
+              print('❌ FAIL: Order has no status')
+              exit(1)
+            if not hasattr(order, 'items'):
+              print('❌ FAIL: Order has no items')
+              exit(1)
+            if not hasattr(order, 'total_amount'):
+              print('❌ FAIL: Order has no total_amount')
+              exit(1)
+            
+            # Check methods exist
+            if not callable(getattr(order, 'add_item', None)):
+              print('❌ FAIL: Order.add_item method missing')
+              exit(1)
+            if not callable(getattr(order, 'pay', None)):
+              print('❌ FAIL: Order.pay method missing')
+              exit(1)
+            if not callable(getattr(order, 'cancel', None)):
+              print('❌ FAIL: Order.cancel method missing')
+              exit(1)
+            if not callable(getattr(order, 'ship', None)):
+              print('❌ FAIL: Order.ship method missing')
+              exit(1)
+            if not callable(getattr(order, 'complete', None)):
+              print('❌ FAIL: Order.complete method missing')
+              exit(1)
+            
+            print('✅ Order class implemented correctly')
+          except NotImplementedError:
+            print('❌ FAIL: Order class not implemented')
+            exit(1)
+          except TypeError as e:
+            print(f'❌ FAIL: Order initialization error: {e}')
+            exit(1)
+          "
+
+  check-sql-schema:
+    name: Check SQL Schema Requirements
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Check migration file exists
+        run: |
+          if [ ! -f "backend/migrations/001_init.sql" ]; then
+            echo "❌ FAIL: Migration file not found"
+            exit 1
+          fi
+          echo "✅ Migration file exists"
+
+      - name: Check required tables
+        run: |
+          echo "Checking required tables in SQL schema..."
+          SQL_FILE="backend/migrations/001_init.sql"
+          
+          check_table() {
+            if grep -qi "CREATE TABLE.*$1" "$SQL_FILE"; then
+              echo "✅ Table $1 found"
+              return 0
+            else
+              echo "❌ FAIL: Table $1 not found"
+              return 1
+            fi
+          }
+          
+          FAILED=0
+          check_table "order_statuses" || FAILED=1
+          check_table "users" || FAILED=1
+          check_table "orders" || FAILED=1
+          check_table "order_items" || FAILED=1
+          check_table "order_status_history" || FAILED=1
+          
+          if [ $FAILED -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: Check constraints in SQL
+        run: |
+          echo "Checking constraints in SQL schema..."
+          SQL_FILE="backend/migrations/001_init.sql"
+          
+          # Check for CHECK constraints
+          if grep -qi "CHECK" "$SQL_FILE"; then
+            echo "✅ CHECK constraints found"
+          else
+            echo "❌ FAIL: No CHECK constraints found"
+            exit 1
+          fi
+          
+          # Check for UNIQUE constraints (email)
+          if grep -qi "UNIQUE" "$SQL_FILE"; then
+            echo "✅ UNIQUE constraints found"
+          else
+            echo "❌ FAIL: No UNIQUE constraints found"
+            exit 1
+          fi
+          
+          # Check for FOREIGN KEY / REFERENCES
+          if grep -qi "REFERENCES\|FOREIGN KEY" "$SQL_FILE"; then
+            echo "✅ FOREIGN KEY constraints found"
+          else
+            echo "❌ FAIL: No FOREIGN KEY constraints found"
+            exit 1
+          fi
+          
+          # Check for NOT NULL
+          if grep -qi "NOT NULL" "$SQL_FILE"; then
+            echo "✅ NOT NULL constraints found"
+          else
+            echo "❌ FAIL: No NOT NULL constraints found"
+            exit 1
+          fi
+
+      - name: Check critical trigger for double payment
+        run: |
+          echo "Checking CRITICAL trigger to prevent double payment..."
+          SQL_FILE="backend/migrations/001_init.sql"
+          
+          # Check for trigger function
+          if grep -qi "CREATE.*FUNCTION.*paid\|check.*paid\|prevent.*paid" "$SQL_FILE"; then
+            echo "✅ Trigger function for payment check found"
+          else
+            echo "⚠️  WARNING: Payment check trigger function not clearly found"
+          fi
+          
+          # Check for trigger
+          if grep -qi "CREATE.*TRIGGER" "$SQL_FILE"; then
+            echo "✅ TRIGGER found in schema"
+          else
+            echo "❌ FAIL: No TRIGGER found - double payment prevention required!"
+            exit 1
+          fi
+          
+          # Check trigger is on orders table
+          if grep -qi "TRIGGER.*ON.*orders\|ON orders.*TRIGGER" "$SQL_FILE"; then
+            echo "✅ Trigger on orders table found"
+          else
+            echo "⚠️  WARNING: Trigger should be on orders table"
+          fi
+
+      - name: Check specific invariants in SQL
+        run: |
+          echo "Checking specific invariants..."
+          SQL_FILE="backend/migrations/001_init.sql"
+          
+          # Check price >= 0
+          if grep -qi "price.*>=.*0\|price.*>.*-1" "$SQL_FILE"; then
+            echo "✅ Price >= 0 constraint found"
+          else
+            echo "⚠️  WARNING: price >= 0 constraint not clearly found"
+          fi
+          
+          # Check quantity > 0
+          if grep -qi "quantity.*>.*0\|quantity.*>=.*1" "$SQL_FILE"; then
+            echo "✅ Quantity > 0 constraint found"
+          else
+            echo "⚠️  WARNING: quantity > 0 constraint not clearly found"
+          fi
+          
+          # Check total_amount >= 0
+          if grep -qi "total_amount.*>=.*0\|total.*>=.*0" "$SQL_FILE"; then
+            echo "✅ Total amount >= 0 constraint found"
+          else
+            echo "⚠️  WARNING: total_amount >= 0 constraint not clearly found"
+          fi
+          
+          # Check email regex or email validation
+          if grep -qi "email.*~\|email.*CHECK\|email.*LIKE" "$SQL_FILE"; then
+            echo "✅ Email validation found"
+          else
+            echo "⚠️  WARNING: Email validation not clearly found"
+          fi
+
+  check-implementation-complete:
+    name: Check Implementation Not Empty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Check for remaining NotImplementedError in repositories
+        run: |
+          echo "Checking repositories implementation..."
+          REPO_FILE="backend/app/infrastructure/repositories.py"
+          
+          NOT_IMPL_COUNT=$(grep -c "NotImplementedError" "$REPO_FILE" || echo "0")
+          
+          if [ "$NOT_IMPL_COUNT" -gt 0 ]; then
+            echo "❌ FAIL: Found $NOT_IMPL_COUNT NotImplementedError in repositories.py"
+            echo "The following methods need implementation:"
+            grep -n "NotImplementedError" "$REPO_FILE" || true
+            exit 1
+          fi
+          
+          echo "✅ All repository methods implemented"
+
+      - name: Check for remaining NotImplementedError in services
+        run: |
+          echo "Checking services implementation..."
+          
+          for SERVICE_FILE in backend/app/application/*_service.py; do
+            if [ -f "$SERVICE_FILE" ]; then
+              NOT_IMPL_COUNT=$(grep -c "NotImplementedError" "$SERVICE_FILE" || echo "0")
+              
+              if [ "$NOT_IMPL_COUNT" -gt 0 ]; then
+                echo "❌ FAIL: Found $NOT_IMPL_COUNT NotImplementedError in $SERVICE_FILE"
+                echo "The following methods need implementation:"
+                grep -n "NotImplementedError" "$SERVICE_FILE" || true
+                exit 1
+              fi
+              
+              echo "✅ $SERVICE_FILE fully implemented"
+            fi
+          done
+
+      - name: Check domain classes are not empty pass
+        run: |
+          echo "Checking domain classes are not empty..."
+          
+          # Check User class
+          USER_PASS=$(grep -c "^class User:$" backend/app/domain/user.py 2>/dev/null || echo "0")
+          USER_BODY=$(grep -A1 "^class User:$" backend/app/domain/user.py 2>/dev/null | grep -c "pass" || echo "0")
+          
+          if [ "$USER_PASS" -gt 0 ] && [ "$USER_BODY" -gt 0 ]; then
+            echo "❌ FAIL: User class is empty (just 'pass')"
+            exit 1
+          fi
+          
+          # Check Order class
+          ORDER_PASS=$(grep -c "^class Order:$" backend/app/domain/order.py 2>/dev/null || echo "0")
+          ORDER_BODY=$(grep -A1 "^class Order:$" backend/app/domain/order.py 2>/dev/null | grep -c "pass" || echo "0")
+          
+          if [ "$ORDER_PASS" -gt 0 ] && [ "$ORDER_BODY" -gt 0 ]; then
+            echo "❌ FAIL: Order class is empty (just 'pass')"
+            exit 1
+          fi
+          
+          # Check OrderItem class
+          ITEM_PASS=$(grep -c "^class OrderItem:$" backend/app/domain/order.py 2>/dev/null || echo "0")
+          ITEM_BODY=$(grep -A1 "^class OrderItem:$" backend/app/domain/order.py 2>/dev/null | grep -c "pass" || echo "0")
+          
+          if [ "$ITEM_PASS" -gt 0 ] && [ "$ITEM_BODY" -gt 0 ]; then
+            echo "❌ FAIL: OrderItem class is empty (just 'pass')"
+            exit 1
+          fi
+          
+          # Check OrderStatus enum
+          STATUS_PASS=$(grep -c "^class OrderStatus" backend/app/domain/order.py 2>/dev/null || echo "0")
+          STATUS_BODY=$(grep -A1 "^class OrderStatus" backend/app/domain/order.py 2>/dev/null | grep -c "pass" || echo "0")
+          
+          if [ "$STATUS_PASS" -gt 0 ] && [ "$STATUS_BODY" -gt 0 ]; then
+            echo "❌ FAIL: OrderStatus enum is empty (just 'pass')"
+            exit 1
+          fi
+          
+          echo "✅ Domain classes are not empty"
+
+  test-domain:
+    name: Test Domain Invariants
+    runs-on: ubuntu-latest
+    needs: [check-domain-implementation]
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+      
+      - name: Run domain tests
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          pytest app/tests/test_domain.py -v --tb=short
+
+  test-payment-invariant:
+    name: Test CRITICAL Invariant (Cannot Pay Twice)
+    runs-on: ubuntu-latest
+    needs: [check-domain-implementation]
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+      
+      - name: Test critical payment invariant
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          echo "Testing CRITICAL invariant - order cannot be paid twice"
+          pytest app/tests/test_domain.py::TestCriticalPaymentInvariant -v
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [check-sql-schema, check-implementation-complete]
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: marketplace_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+      
+      - name: Setup database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d marketplace_test -f backend/migrations/001_init.sql
+      
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/marketplace_test
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          pytest app/tests/test_integration.py -v --tb=short
+
+  test-db-trigger:
+    name: Test DB Trigger (Double Payment Prevention)
+    runs-on: ubuntu-latest
+    needs: [check-sql-schema]
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: marketplace_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup database schema
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d marketplace_test -f backend/migrations/001_init.sql
+      
+      - name: Test double payment trigger
+        env:
+          PGPASSWORD: postgres
+        run: |
+          echo "Testing that DB trigger prevents double payment..."
+          
+          # Create test data
+          psql -h localhost -U postgres -d marketplace_test << 'EOF'
+          -- Insert test user
+          INSERT INTO users (id, email, name, created_at) 
+          VALUES ('11111111-1111-1111-1111-111111111111', 'test@example.com', 'Test User', NOW())
+          ON CONFLICT DO NOTHING;
+          
+          -- Insert test order with 'created' status
+          INSERT INTO orders (id, user_id, status, total_amount, created_at)
+          VALUES ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', 'created', 100.00, NOW())
+          ON CONFLICT DO NOTHING;
+          
+          -- First payment should succeed
+          UPDATE orders SET status = 'paid' WHERE id = '22222222-2222-2222-2222-222222222222';
+          
+          -- Record in history
+          INSERT INTO order_status_history (id, order_id, status, changed_at)
+          VALUES (uuid_generate_v4(), '22222222-2222-2222-2222-222222222222', 'paid', NOW());
+          
+          SELECT 'First payment succeeded' AS result;
+          EOF
+          
+          # Try to pay again - should fail
+          echo "Attempting second payment (should fail)..."
+          if psql -h localhost -U postgres -d marketplace_test -c "
+            UPDATE orders SET status = 'created' WHERE id = '22222222-2222-2222-2222-222222222222';
+            UPDATE orders SET status = 'paid' WHERE id = '22222222-2222-2222-2222-222222222222';
+          " 2>&1; then
+            echo "⚠️  WARNING: Second payment did not raise error (trigger may not be working)"
+            # Check if history has multiple 'paid' entries
+            PAID_COUNT=$(psql -h localhost -U postgres -d marketplace_test -t -c "
+              SELECT COUNT(*) FROM order_status_history 
+              WHERE order_id = '22222222-2222-2222-2222-222222222222' AND status = 'paid';
+            " | tr -d ' ')
+            if [ "$PAID_COUNT" -gt 1 ]; then
+              echo "❌ FAIL: Multiple 'paid' entries in history - trigger not preventing double payment!"
+              exit 1
+            fi
+          else
+            echo "✅ Second payment correctly rejected by trigger"
+          fi
+
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    needs: [lint, check-ddd-architecture, check-domain-implementation, check-sql-schema, check-implementation-complete, test-domain, test-payment-invariant, test-integration, test-db-trigger]
+    if: always()
+    steps:
+      - name: Print summary
+        run: |
+          echo "======================================"
+          echo "Lab 1 - Marketplace Database"
+          echo "======================================"
+          echo ""
+          echo "Checks performed:"
+          echo "1. ✓ Lint (code style)"
+          echo "2. ✓ DDD Architecture (layer structure)"
+          echo "3. ✓ Domain Implementation (classes not empty)"
+          echo "4. ✓ SQL Schema (tables, constraints, triggers)"
+          echo "5. ✓ Implementation Complete (no NotImplementedError)"
+          echo "6. ✓ Domain Tests (invariants)"
+          echo "7. ✓ CRITICAL: Payment Invariant Test"
+          echo "8. ✓ Integration Tests"
+          echo "9. ✓ DB Trigger Test (double payment prevention)"
+          echo ""
+          echo "CRITICAL REQUIREMENT:"
+          echo "Order cannot be paid twice - enforced at:"
+          echo "  - Domain layer (Python)"
+          echo "  - Database layer (PostgreSQL trigger)"
+          echo "======================================"
