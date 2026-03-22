@@ -17,11 +17,22 @@ class OrderService:
 
     # TODO: Реализовать create_order(user_id) -> Order
     async def create_order(self, user_id: uuid.UUID) -> Order:
-        raise NotImplementedError("TODO: Реализовать OrderService.create_order")
+        order = Order(
+            user_id=user_id
+        )
+        
+        await self.order_repo.save(order)
+
+        return order 
+
 
     # TODO: Реализовать get_order(order_id) -> Order
     async def get_order(self, order_id: uuid.UUID) -> Order:
-        raise NotImplementedError("TODO: Реализовать OrderService.get_order")
+        order = await self.order_repo.find_by_id(order_id)
+        if not order:
+            raise OrderNotFoundError(order_id)
+        return order 
+    
 
     # TODO: Реализовать add_item(order_id, product_name, price, quantity) -> OrderItem
     async def add_item(
@@ -31,29 +42,78 @@ class OrderService:
         price: Decimal,
         quantity: int,
     ) -> OrderItem:
-        raise NotImplementedError("TODO: Реализовать OrderService.add_item")
+        order: Order = await self.order_repo.find_by_id(order_id)
+        if not order:
+            raise OrderNotFoundError(order_id)
+        
+        order_item = order.add_item(product_name=product_name, price=price, quantity=quantity)
+
+        await self.order_repo.save(order)
+
+        return order_item
+
 
     # TODO: Реализовать pay_order(order_id) -> Order
     # КРИТИЧНО: гарантировать что нельзя оплатить дважды!
     async def pay_order(self, order_id: uuid.UUID) -> Order:
-        raise NotImplementedError("TODO: Реализовать OrderService.pay_order")
+        order: Order = await self.order_repo.find_by_id(order_id)
+        if not order:
+            raise OrderNotFoundError(order_id)
+        
+        order.pay()
+
+        await self.order_repo.save(order)
+
+        return order 
+
 
     # TODO: Реализовать cancel_order(order_id) -> Order
     async def cancel_order(self, order_id: uuid.UUID) -> Order:
-        raise NotImplementedError("TODO: Реализовать OrderService.cancel_order")
+        order: Order = await self.order_repo.find_by_id(order_id)
+        if not order:
+            raise OrderNotFoundError(order_id)
+        
+        order.cancel()
+
+        await self.order_repo.save(order)
+
+        return order 
 
     # TODO: Реализовать ship_order(order_id) -> Order
     async def ship_order(self, order_id: uuid.UUID) -> Order:
-        raise NotImplementedError("TODO: Реализовать OrderService.ship_order")
+        order: Order = await self.order_repo.find_by_id(order_id)
+        if not order:
+            raise OrderNotFoundError(order_id)
+        
+        order.ship()
+
+        await self.order_repo.save(order)
+
+        return order 
+
 
     # TODO: Реализовать complete_order(order_id) -> Order
     async def complete_order(self, order_id: uuid.UUID) -> Order:
-        raise NotImplementedError("TODO: Реализовать OrderService.complete_order")
+        order: Order = await self.order_repo.find_by_id(order_id)
+        if not order:
+            raise OrderNotFoundError(order_id)
+        
+        order.complete()
+
+        await self.order_repo.save(order)
+
+        return order 
+
 
     # TODO: Реализовать list_orders(user_id: Optional) -> List[Order]
     async def list_orders(self, user_id: Optional[uuid.UUID] = None) -> List[Order]:
-        raise NotImplementedError("TODO: Реализовать OrderService.list_orders")
+        return await self.order_repo.find_by_user(user_id)
+    
 
     # TODO: Реализовать get_order_history(order_id) -> List[OrderStatusChange]
     async def get_order_history(self, order_id: uuid.UUID) -> List:
-        raise NotImplementedError("TODO: Реализовать OrderService.get_order_history")
+        order: Order = await self.order_repo.find_by_id(order_id)
+        if not order:
+            raise OrderNotFoundError(order_id)
+
+        return order.status_history

@@ -58,8 +58,40 @@ class PaymentService:
             OrderNotFoundError: если заказ не найден
             OrderAlreadyPaidError: если заказ уже оплачен
         """
-        # TODO: Реализовать логику оплаты БЕЗ блокировок
-        raise NotImplementedError("TODO: Реализовать PaymentService.pay_order_unsafe")
+        async with self.session.begin():
+            get_status_query = text("""
+                SELECT status FROM orders WHERE id = :order_id
+            """)
+
+            status = await self.session.execute(get_status_query, {"order_id": order_id})
+            status = status.first()
+
+            if not status:
+                raise OrderNotFoundError(order_id=order_id)
+
+            if status[0] != 'created':
+                raise OrderAlreadyPaidError(order_id=order_id)
+            
+            update_status_query = text("""
+                UPDATE orders SET status = 'paid' WHERE id= :order_id AND status = 'created'
+            """)
+
+            await self.session.execute(update_status_query, {"order_id": order_id})
+
+            update_history_query = text("""
+                INSERT INTO order_status_history (id, order_id, status, changed_at)
+                VALUES (gen_random_uuid(), :order_id, 'paid', NOW())
+            """)
+
+            await self.session.execute(update_history_query, {"order_id": order_id})
+        
+        return {
+            "order_id": order_id,
+            "status": "paid"
+        }
+
+
+
 
     async def pay_order_safe(self, order_id: uuid.UUID) -> dict:
         """
@@ -107,8 +139,41 @@ class PaymentService:
             OrderNotFoundError: если заказ не найден
             OrderAlreadyPaidError: если заказ уже оплачен
         """
-        # TODO: Реализовать логику оплаты С блокировками
-        raise NotImplementedError("TODO: Реализовать PaymentService.pay_order_safe")
+        async with self.session.begin():
+            await self.session.execute(
+               text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            )
+
+            status = await self.session.execute(text("""SELECT status FROM orders WHERE id = :order_id FOR UPDATE"""),
+                {"order_id": order_id}
+            )
+            status = status.first()
+
+            if not status:
+                raise OrderNotFoundError(order_id=order_id)
+
+            if status[0] != 'created':
+                raise OrderAlreadyPaidError(order_id=order_id)
+            
+            update_status_query = text("""
+                UPDATE orders SET status = 'paid' WHERE id= :order_id AND status = 'created'
+            """)
+
+            await self.session.execute(update_status_query, {"order_id": order_id})
+
+            update_history_query = text("""
+                INSERT INTO order_status_history (id, order_id, status, changed_at)
+                VALUES (gen_random_uuid(), :order_id, 'paid', NOW())
+            """)
+
+            await self.session.execute(update_history_query, {"order_id": order_id})
+        
+        return {
+            "order_id": order_id,
+            "status": "paid"
+        }
+
+            
 
     async def get_payment_history(self, order_id: uuid.UUID) -> list[dict]:
         """
@@ -129,5 +194,25 @@ class PaymentService:
         Returns:
             Список словарей с записями об оплате
         """
-        # TODO: Реализовать получение истории оплат
-        raise NotImplementedError("TODO: Реализовать PaymentService.get_payment_history")
+        raw_history = await self.session.execute(
+            text("""
+                SELECT id, order_id, status, changed_at
+                FROM order_status_history
+                WHERE order_id = :order_id AND status = 'paid'
+                ORDER BY changed_at
+            """),
+            {"order_id": order_id}
+        )
+        raw_history = raw_history.fetchall()
+
+        history = []
+        
+        for row in raw_history:
+            history.append({
+                "id": str(row[0]),
+                "order_id": str(row[1]),
+                "status": row[2],
+                "changed_at": row[3]
+            })
+        
+        return history

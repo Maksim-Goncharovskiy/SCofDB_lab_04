@@ -8,9 +8,8 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: marketplace
     ports:
-      - "5434:5432"
+      - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations:/docker-entrypoint-initdb.d:ro
       - ./sql:/sql:ro
     healthcheck:
@@ -41,6 +40,3 @@ services:
       - "5174:5173"
     environment:
       VITE_API_URL: http://backend:8080
-
-volumes:
-  postgres_data:

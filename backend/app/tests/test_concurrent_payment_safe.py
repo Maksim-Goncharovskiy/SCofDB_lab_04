@@ -8,8 +8,9 @@ pay_order_safe() заказ оплачивается только один ра�
 import asyncio
 import pytest
 import uuid
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 from app.application.payment_service import PaymentService
 from app.domain.exceptions import OrderAlreadyPaidError
@@ -24,25 +25,100 @@ async def db_session():
     """
     Создать сессию БД для тестов.
     
-    TODO: Реализовать фикстуру (см. test_concurrent_payment_unsafe.py)
+    TODO: Реализовать фикстуру:
+    1. Создать engine
+    2. Создать session maker
+    3. Открыть сессию
+    4. Yield сессию
+    5. Закрыть сессию после теста
     """
-    # TODO: Реализовать создание сессии
-    raise NotImplementedError("TODO: Реализовать db_session fixture")
+    engine = create_async_engine(DATABASE_URL, echo=False)
+    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with Session() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 @pytest.fixture
-async def test_order(db_session):
+async def db_engine():
+    engine = create_async_engine(DATABASE_URL, echo=False)
+    yield engine
+
+
+@pytest.fixture
+async def test_order(db_session, db_engine):
     """
     Создать тестовый заказ со статусом 'created'.
     
     TODO: Реализовать фикстуру (см. test_concurrent_payment_unsafe.py)
     """
-    # TODO: Реализовать создание тестового заказа
-    raise NotImplementedError("TODO: Реализовать test_order fixture")
+    user_id = uuid.uuid4()
+    test_user = {
+        "id": user_id,
+        "email": f"test_user_{str(user_id)[:5]}@gmail.com",
+        "name": "Test User"
+    }
+
+    order_id = uuid.uuid4()
+    test_order = {
+        "id": order_id,
+        "user_id": user_id,
+        "status": "created",
+        "total_amount": 23.0
+    }
+
+    async with db_session.begin():
+        await db_session.execute(
+                text("""
+                    INSERT INTO users (id, email, name, created_at)
+                    VALUES (:id, :email, :name, NOW())
+                    ON CONFLICT (id) DO NOTHING
+                """),
+                test_user
+            )
+        
+        await db_session.execute(
+                text("""
+                    INSERT INTO orders (id, user_id, status, total_amount, created_at)
+                    VALUES (:id, :user_id, :status, :total_amount, NOW())
+                """),
+                test_order
+            )
+        
+        await db_session.execute(
+                text("""
+                    INSERT INTO order_status_history (id, order_id, status, changed_at)
+                    VALUES (gen_random_uuid(), :order_id, 'created', NOW())
+                """),
+                {"order_id": order_id}
+            )
+        
+    yield order_id 
+
+    async with AsyncSession(db_engine) as delete_session:
+        async with delete_session.begin():
+            await delete_session.execute(
+                text("DELETE FROM order_status_history WHERE order_id = :order_id"),
+                {"order_id": order_id}
+            )
+            await delete_session.execute(
+                text("DELETE FROM orders WHERE id = :order_id"),
+                {"order_id": order_id}
+            )
+            await delete_session.execute(
+                text("DELETE FROM users WHERE id = :user_id"),
+                {"user_id": user_id}
+            )
 
 
 @pytest.mark.asyncio
-async def test_concurrent_payment_safe_prevents_race_condition(db_session, test_order):
+async def test_concurrent_payment_safe_prevents_race_condition(db_session, test_order, db_engine):
     """
     Тест демонстрирует решение проблемы race condition с помощью pay_order_safe().
     
@@ -95,8 +171,38 @@ async def test_concurrent_payment_safe_prevents_race_condition(db_session, test_
        print(f"  - {history[0]['changed_at']}: status = {history[0]['status']}")
        print(f"Second attempt was rejected: {results[1]}")
     """
-    # TODO: Реализовать тест, демонстрирующий решение race condition
-    raise NotImplementedError("TODO: Реализовать test_concurrent_payment_safe")
+    order_id = test_order
+
+    async def payment_attempt_1():
+        async with AsyncSession(db_engine) as session1:
+            service1 = PaymentService(session1)
+            return await service1.pay_order_safe(order_id)
+           
+    async def payment_attempt_2():
+        async with AsyncSession(db_engine) as session2:
+            service2 = PaymentService(session2)
+            return await service2.pay_order_safe(order_id)
+           
+    results = await asyncio.gather(
+        payment_attempt_1(),
+        payment_attempt_2(),
+        return_exceptions=True
+    )
+
+    success_count = sum(1 for r in results if not isinstance(r, Exception))
+    error_count = sum(1 for r in results if isinstance(r, Exception))
+       
+    assert success_count == 1, "Ожидалась одна успешная оплата"
+    assert error_count == 1, "Ожидалась одна неудачная попытка"
+
+    service = PaymentService(db_session)
+    history = await service.get_payment_history(order_id)
+
+    assert len(history) == 1, "Ожидалась 1 запись об оплате (БЕЗ RACE CONDITION!)"
+
+    print(f"✅ RACE CONDITION PREVENTED!")
+    print(f"  - {history[0]['changed_at']}: status = {history[0]['status']}")
+    print(f"Second attempt was rejected: {results[1]}")
 
 
 @pytest.mark.asyncio
@@ -126,8 +232,7 @@ async def test_concurrent_payment_safe_with_explicit_timing():
        
     Это подтверждает, что FOR UPDATE действительно блокирует строку.
     """
-    # TODO: Реализовать тест с проверкой блокировки
-    raise NotImplementedError("TODO: Реализовать test_concurrent_payment_safe_with_explicit_timing")
+    pass
 
 
 @pytest.mark.asyncio
@@ -143,8 +248,7 @@ async def test_concurrent_payment_safe_multiple_orders():
     Это показывает, что FOR UPDATE блокирует только конкретную строку,
     а не всю таблицу, что важно для производительности.
     """
-    # TODO: Реализовать тест с несколькими заказами
-    raise NotImplementedError("TODO: Реализовать test_concurrent_payment_safe_multiple_orders")
+    pass
 
 
 if __name__ == "__main__":
