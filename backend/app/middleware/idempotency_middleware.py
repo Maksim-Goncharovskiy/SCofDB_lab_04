@@ -37,52 +37,53 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         request_hash = self.build_request_hash(request_body)
 
         async with SessionLocal() as session:
-            idempotency_record = await session.execute(text("""
-                SELECT status, request_hash, status_code, response_body
-                FROM idempotency_keys
-                WHERE idempotency_key = :key
-                AND request_method = :method
-                AND request_path = :path
-                FOR UPDATE
-            """),
-            {"key": idempotency_key, "method": request.method, "path": request.url.path})
+            async with session.begin(): 
+                idempotency_record = await session.execute(text("""
+                    SELECT status, request_hash, status_code, response_body
+                    FROM idempotency_keys
+                    WHERE idempotency_key = :key
+                    AND request_method = :method
+                    AND request_path = :path
+                    FOR UPDATE
+                """),
+                {"key": idempotency_key, "method": request.method, "path": request.url.path})
 
-            idempotency_record = idempotency_record.fetchone()
-                        
-            # если запись найдена - проверяем хеши и возвращаем результат
-            if idempotency_record:
-                status, record_hash, status_code, response_body = idempotency_record
+                idempotency_record = idempotency_record.fetchone()
+                            
+                # если запись найдена - проверяем хеши и возвращаем результат
+                if idempotency_record:
+                    status, record_hash, status_code, response_body = idempotency_record
 
-                if request_hash != record_hash:
-                    return Response(
-                        content=json.dumps({"error": "Повторное использование Idempotency-Key с другим содержимым"}),
-                        status_code=409,
-                        media_type="application/json"
-                    )
-                else:
-                    if status == 'processing':
+                    if request_hash != record_hash:
                         return Response(
-                            content=json.dumps({"error": "Данный запрос уже в обработке!"}),
-                            status_code=400,
+                            content=json.dumps({"error": "Повторное использование Idempotency-Key с другим содержимым"}),
+                            status_code=409,
                             media_type="application/json"
                         )
                     else:
-                        return Response(
-                            content=json.dumps(response_body),
-                            status_code=status_code,
-                            media_type="application/json",
-                            headers={"X-Idempotency-Replayed": "true"}
-                        )
-                        
-            # если запись не найдена заводим её
-            else:
-                await session.execute(text("""
-                    INSERT INTO idempotency_keys 
-                    (idempotency_key, request_method, request_path, request_hash, status, expires_at)
-                    VALUES 
-                    (:key, :method, :path, :hash, 'processing', NOW() + INTERVAL '1 day')
-                """),
-                {'key': idempotency_key, 'method': request.method, 'path': request.url.path, 'hash': request_hash})
+                        if status == 'processing':
+                            return Response(
+                                content=json.dumps({"error": "Данный запрос уже в обработке!"}),
+                                status_code=400,
+                                media_type="application/json"
+                            )
+                        else:
+                            return Response(
+                                content=json.dumps(response_body),
+                                status_code=status_code,
+                                media_type="application/json",
+                                headers={"X-Idempotency-Replayed": "true"}
+                            )
+                            
+                # если запись не найдена заводим её
+                else:
+                    await session.execute(text("""
+                        INSERT INTO idempotency_keys 
+                        (idempotency_key, request_method, request_path, request_hash, status, expires_at)
+                        VALUES 
+                        (:key, :method, :path, :hash, 'processing', NOW() + INTERVAL '1 day')
+                    """),
+                    {'key': idempotency_key, 'method': request.method, 'path': request.url.path, 'hash': request_hash})
 
         response: Response = await call_next(request)
 

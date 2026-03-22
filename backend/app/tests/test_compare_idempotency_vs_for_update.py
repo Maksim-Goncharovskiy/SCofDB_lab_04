@@ -190,3 +190,4 @@ async def test_compare_for_update_and_idempotency_behaviour(db_engine, two_test_
       await cleanup_session.execute(text("""
          DELETE FROM idempotency_keys 
       """))
+      await cleanup_session.commit()
